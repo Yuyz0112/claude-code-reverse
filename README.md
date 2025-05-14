@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/yuyz0112-claude-code-reverse-badge.png)](https://mseep.ai/app/yuyz0112-claude-code-reverse)
+
 # Claude Code Reverse Engineering
 
 [中文版](./README.zh_CN.md)
