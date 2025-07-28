@@ -1,0 +1,992 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <title>LLM Results Viewer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Markdown render + sanitize -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b0d12;
+      --card: #121622;
+      --muted: #1a2030;
+      --border: #2a3348;
+      --text: #e6e9f2;
+      --sub: #a7b0c3;
+      --accent: #7aa2ff;
+      --pill-bg: #0f1729;
+      --pill-br: #2a3a6b;
+      --good: #2ecc71;
+      --warn: #f1c40f;
+      --bad: #e74c3c;
+      --shadow: 0 6px 24px rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .25);
+      --radius: 16px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    }
+
+    * {
+      box-sizing: border-box
+    }
+
+    html,
+    body {
+      height: 100%
+    }
+
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #0a0d14, #0b0d12 40%);
+      color: var(--text);
+      font-family: var(--sans)
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 24px auto;
+      padding: 0 16px
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px
+    }
+
+    .file-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      border-radius: 12px;
+      cursor: pointer;
+      box-shadow: var(--shadow)
+    }
+
+    .file-name {
+      color: var(--sub);
+      font-size: .9rem
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px
+    }
+
+    .grid-2 {
+      grid-template-columns: 1fr
+    }
+
+    @media(min-width:900px) {
+      .grid-2 {
+        grid-template-columns: 1fr 1fr
+      }
+    }
+
+    .card {
+      background: linear-gradient(180deg, #121622, #101522 60%, #0e1320);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow)
+    }
+
+    .card h3 {
+      margin: 0;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 1rem
+    }
+
+    .card-body {
+      padding: 12px 16px
+    }
+
+    details {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--muted);
+      margin-bottom: 10px;
+      overflow: hidden
+    }
+
+    summary {
+      cursor: pointer;
+      padding: 10px 12px;
+      list-style: none;
+      outline: none;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between
+    }
+
+    summary::-webkit-details-marker {
+      display: none
+    }
+
+    .summary-title {
+      font-weight: 600
+    }
+
+    .muted {
+      color: var(--sub)
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border: 1px solid var(--pill-br);
+      border-radius: 999px;
+      background: var(--pill-bg);
+      color: #cfe1ff;
+      font-family: var(--mono);
+      font-size: .85rem;
+      cursor: pointer;
+      margin: 4px 6px 0 0;
+      text-decoration: none
+    }
+
+    .pill:hover {
+      border-color: var(--accent);
+      color: #fff
+    }
+
+    .pill.badge {
+      cursor: default
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 6px;
+      font-size: .92rem;
+      margin: 8px 0
+    }
+
+    pre,
+    code {
+      font-family: var(--mono);
+      white-space: pre-wrap;
+      word-break: break-word
+    }
+
+    .mono {
+      font-family: var(--mono)
+    }
+
+    .row {
+      display: flex;
+      gap: 16px
+    }
+
+    .col {
+      flex: 1
+    }
+
+    .section-title {
+      font-weight: 700;
+      margin: 8px 0 6px
+    }
+
+    .bubble {
+      background: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin: 8px 0
+    }
+
+    .small {
+      font-size: .88rem
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #0f1422;
+      color: #c9d3ea;
+      font-size: .75rem
+    }
+
+    .footer-nav {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin-top: 16px
+    }
+
+    .nav-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      cursor: pointer;
+      box-shadow: var(--shadow);
+      font-size: 18px
+    }
+
+    .nav-btn:disabled {
+      opacity: .4;
+      cursor: not-allowed
+    }
+
+    .idx {
+      color: var(--sub)
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 8px 0
+    }
+
+    .hint {
+      color: #8fb1ff;
+      font-size: .9rem
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #0d1424;
+      color: #cfe1ff;
+      font-size: .8rem;
+      margin: 2px 6px 0 0
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap
+    }
+
+    .hl {
+      color: #ffd479
+    }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, .55);
+      z-index: 50
+    }
+
+    .modal.open {
+      display: flex
+    }
+
+    .modal-card {
+      max-width: 900px;
+      width: 92%;
+      max-height: 80vh;
+      overflow: auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow)
+    }
+
+    .modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border)
+    }
+
+    .modal-body {
+      padding: 14px
+    }
+
+    .btn {
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #0e1424;
+      color: #cfe1ff;
+      cursor: pointer
+    }
+
+    .copy {
+      margin-left: 8px
+    }
+
+    .ref-chip {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      border: 1px solid rgba(0, 0, 0, .12);
+      font-size: 12px;
+      line-height: 18px;
+      cursor: pointer;
+      user-select: none;
+      margin: 2px 0;
+    }
+
+    .ref-chip:hover {
+      background: rgba(0, 0, 0, .04);
+    }
+
+    .flash {
+      animation: flash 1s ease;
+    }
+
+    @keyframes flash {
+      0% {
+        background: rgba(255, 235, 59, .4)
+      }
+
+      100% {
+        background: transparent
+      }
+    }
+
+    /* Markdown tweaks inside bubbles */
+    .bubble h1,
+    .bubble h2,
+    .bubble h3 {
+      margin: .2rem 0 .4rem;
+      font-size: 1rem
+    }
+
+    .bubble pre {
+      background: #0b1120;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid #223
+    }
+
+    .bubble blockquote {
+      margin: 6px 0;
+      padding: 6px 10px;
+      border-left: 3px solid #385;
+      opacity: .95
+    }
+
+    .bubble ul {
+      margin: .2rem 0 .2rem 1.2rem
+    }
+
+    .bubble table {
+      border-collapse: collapse;
+      border: 1px solid var(--border);
+      width: 100%
+    }
+
+    .bubble th,
+    .bubble td {
+      border: 1px solid var(--border);
+      padding: 6px 8px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="topbar">
+      <label class="file-btn">
+        <input id="fileInput" type="file" accept=".log,.txt,text/plain" hidden />
+        <span>Choose conversation log</span>
+      </label>
+      <span id="fileName" class="file-name">No file chosen</span>
+      <span id="metaInfo" class="hint"></span>
+    </div>
+
+
+    <!-- Conversation viewer -->
+    <div class="card">
+      <h3>Conversation</h3>
+      <div class="card-body">
+        <div id="convHeader" class="chips"></div>
+        <div class="row">
+          <div class="col">
+            <div class="section-title">Input</div>
+            <div id="inputPanel"></div>
+          </div>
+          <div class="col">
+            <div class="section-title">Output</div>
+            <div id="outputPanel"></div>
+          </div>
+        </div>
+        <div class="footer-nav">
+          <button id="prevBtn" class="nav-btn" disabled aria-label="Prev">←</button>
+          <span id="indexLabel" class="idx">0 / 0</span>
+          <button id="nextBtn" class="nav-btn" disabled aria-label="Next">→</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tools & System Prompts -->
+    <div class="grid grid-2" style="margin-top:16px">
+      <div class="card" id="toolsCard">
+        <h3>Global Tool Set</h3>
+        <div class="card-body" id="toolsBody">
+          <div class="muted small">Parsed from <code>tool_defs</code>. Collapsed by default.</div>
+          <div id="toolsList" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div class="card" id="systemCard">
+        <h3>Guessed System Prompts</h3>
+        <div class="card-body" id="systemBody">
+          <div class="muted small">
+            Aggregated from <code>input.system</code>, <code>prompt_kind_guess</code>,
+            and user messages whose resolved text starts with <code>&lt;system-reminder&gt;</code>.
+          </div>
+          <div id="systemList" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div id="modal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div id="modalTitle" class="small" style="font-weight:700"></div>
+        <div>
+          <button id="copyBtn" class="btn copy" title="Copy">Copy</button>
+          <button id="closeBtn" class="btn" title="Close">Close</button>
+        </div>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Your browser-side parser must provide: window.parseConversationLog(logString) -->
+  <script src="./parser.js"></script>
+  <script>
+    // -------- State --------
+    const state = {
+      data: null,
+      index: 0,
+      promptMap: {},            // id -> text
+      promptCounts: {},         // id -> count
+      toolDefs: {},             // key -> def
+      toolKeysByName: new Map(),// tool name -> [keys]
+      systemPromptIds: new Set(),
+      extraPromptCounts: {}     // counts only for user messages whose resolved text starts with <system-reminder>
+    };
+
+    // -------- Element refs --------
+    const el = id => document.getElementById(id);
+    const fileInput = el('fileInput');
+    const fileNameEl = el('fileName');
+    const metaInfoEl = el('metaInfo');
+    const toolsList = el('toolsList');
+    const systemList = el('systemList');
+    const inputPanel = el('inputPanel');
+    const outputPanel = el('outputPanel');
+    const indexLabel = el('indexLabel');
+    const prevBtn = el('prevBtn');
+    const nextBtn = el('nextBtn');
+    const convHeader = el('convHeader');
+
+    // -------- Modal helpers --------
+    const modal = el('modal'), modalTitle = el('modalTitle'), modalBody = el('modalBody'),
+      closeBtn = el('closeBtn'), copyBtn = el('copyBtn');
+    closeBtn.onclick = () => modal.classList.remove('open');
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('open'); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') modal.classList.remove('open'); });
+    copyBtn.onclick = () => {
+      const sel = document.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(modalBody);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      try { document.execCommand('copy'); } catch { }
+      sel.removeAllRanges();
+    };
+    function openModal(title, contentNode) {
+      modalTitle.textContent = title;
+      modalBody.innerHTML = '';
+      modalBody.appendChild(contentNode);
+      modal.classList.add('open');
+    }
+
+    // -------- UI helpers --------
+    function pill(label, title, onClick, extraClass = '') {
+      const a = document.createElement('a');
+      a.className = 'pill ' + extraClass;
+      a.textContent = label;
+      a.href = 'javascript:void(0)';
+      a.title = title || label;
+      if (onClick) a.onclick = onClick;
+      return a;
+    }
+    function codeBlock(text) {
+      const pre = document.createElement('pre');
+      pre.textContent = text ?? '';
+      return pre;
+    }
+    function mdBlock(text) {
+      const raw = (window.marked && typeof window.marked.parse === 'function')
+        ? window.marked.parse(text ?? '')
+        : (text ?? '');
+      const clean = (window.DOMPurify && typeof window.DOMPurify.sanitize === 'function')
+        ? window.DOMPurify.sanitize(raw)
+        : raw;
+      const div = document.createElement('div');
+      div.innerHTML = clean;
+      return div;
+    }
+    function pretty(obj) { try { return JSON.stringify(obj, null, 2); } catch { return String(obj); } }
+    function isPromptId(x) { return typeof x === 'string' && /^prompt_[\w-]+$/i.test(x.trim()); }
+
+    // -------- Aggregation logic --------
+    function collectSystemPromptIds(data) {
+      const ids = new Set();
+      const prompts = data.prompts || {};
+      const SENTINEL = '<system-reminder>';
+
+      // 1) Prompts explicitly referenced in input.system
+      (data.conversations || []).forEach(c => {
+        const sys = c.input && c.input.system;
+        if (Array.isArray(sys)) {
+          sys.forEach(seg => {
+            if (typeof seg === 'string' && isPromptId(seg)) ids.add(seg.trim());
+            else if (seg && typeof seg === 'object' && seg.type === 'text' && isPromptId(seg.text)) ids.add(seg.text.trim());
+          });
+        }
+      });
+
+      // 2) User messages: ONLY those whose resolved text starts with <system-reminder>
+      const counts = new Map(); // count sentinel-matched prompts
+      (data.conversations || []).forEach(c => {
+        const msgs = (c.input && Array.isArray(c.input.messages)) ? c.input.messages : [];
+        msgs.forEach(m => {
+          if (m.role !== 'user') return;
+          const addIfSentinel = (pid) => {
+            const txt = prompts?.[pid];
+            if (typeof txt === 'string' && txt.trim().startsWith(SENTINEL)) {
+              ids.add(pid);
+              counts.set(pid, (counts.get(pid) || 0) + 1);
+            }
+          };
+          const content = m.content;
+          if (typeof content === 'string') {
+            if (isPromptId(content)) addIfSentinel(content.trim());
+          } else if (Array.isArray(content)) {
+            content.forEach(seg => {
+              if (seg?.type === 'text' && isPromptId(seg.text)) addIfSentinel(seg.text.trim());
+            });
+          }
+        });
+      });
+      state.extraPromptCounts = Object.fromEntries(counts);
+
+      // 3) prompt_kind_guess marked as system
+      const guess = data.prompt_kind_guess || {};
+      Object.entries(guess).forEach(([pid, kind]) => {
+        const k = (kind || '').toString().toLowerCase();
+        if (k.includes('system')) ids.add(pid);
+      });
+
+      return ids;
+    }
+
+    function buildMaps(data) {
+      state.promptMap = data.prompts || {};
+      state.promptCounts = data.prompt_counts || {};
+      state.toolDefs = data.tool_defs || {};
+      state.toolKeysByName = new Map();
+      Object.entries(state.toolDefs).forEach(([k, def]) => {
+        const name = (def && def.name) || k;
+        const arr = state.toolKeysByName.get(name) || [];
+        arr.push(k);
+        state.toolKeysByName.set(name, arr);
+      });
+      state.systemPromptIds = collectSystemPromptIds(data);
+    }
+
+    // -------- Rendering: top cards --------
+    function renderTools() {
+      toolsList.innerHTML = '';
+      const defs = state.toolDefs;
+      if (!defs || !Object.keys(defs).length) {
+        toolsList.innerHTML = '<div class="muted">No tool definitions</div>';
+        return;
+      }
+      Object.entries(defs).forEach(([key, def]) => {
+        const d = document.createElement('details');
+        const s = document.createElement('summary');
+        const left = document.createElement('span');
+        left.className = 'summary-title';
+        left.innerHTML = `<span class="mono hl">${key}</span> — ${def?.name || 'Tool'} <span class="muted small">(${def?.input_schema?.type || 'object'})</span>`;
+        const right = document.createElement('span');
+        right.className = 'badge';
+        right.textContent = (def?.type || def?.input_schema?.$schema || 'schema');
+        s.appendChild(left); s.appendChild(right);
+        d.appendChild(s);
+
+        const body = document.createElement('div');
+        body.style.padding = '8px 12px 12px';
+        const desc = document.createElement('div');
+        desc.className = 'small';
+        desc.textContent = def?.description || '(no description)';
+        body.appendChild(desc);
+        const div = document.createElement('div'); div.className = 'divider'; body.appendChild(div);
+        body.appendChild(codeBlock(pretty(def?.input_schema || {})));
+        d.appendChild(body);
+        toolsList.appendChild(d);
+      });
+    }
+
+    function renderSystemPrompts() {
+      systemList.innerHTML = '';
+      const ids = Array.from(state.systemPromptIds);
+      if (!ids.length) {
+        systemList.innerHTML = '<div class="muted">No system prompts detected</div>';
+        return;
+      }
+      ids.forEach(pid => {
+        const d = document.createElement('details');
+        d.setAttribute('data-prompt-id', pid);
+        const s = document.createElement('summary');
+        const left = document.createElement('span');
+        left.className = 'summary-title';
+        left.innerHTML = `<span class="mono hl">${pid}</span>`;
+        const c = (state.promptCounts?.[pid] ?? state.extraPromptCounts?.[pid]);
+        const right = document.createElement('span');
+        right.className = 'badge';
+        right.textContent = typeof c === 'number' ? `count: ${c}` : 'prompt';
+        s.appendChild(left); s.appendChild(right);
+        d.appendChild(s);
+
+        const body = document.createElement('div');
+        body.style.padding = '8px 12px 12px';
+        const txt = state.promptMap?.[pid] ?? '(not found in prompts)';
+        const bubble = document.createElement('div'); bubble.className = 'bubble small';
+        bubble.appendChild(mdBlock(txt));
+        body.appendChild(bubble);
+
+        d.appendChild(body);
+        systemList.appendChild(d);
+      });
+    }
+
+    // -------- Mapping helpers --------
+    function mapToolRefByName(name) {
+      if (!name) return null;
+      const keys = state.toolKeysByName.get(name) || [];
+      if (keys.length) return keys[0]; // pick first
+      if (state.toolDefs[name]) return name;
+      return null;
+    }
+    function promptRefPill(pid) {
+      return pill(`[${pid}]`, 'View prompt content', () => {
+        const wrap = document.createElement('div');
+        const txt = state.promptMap?.[pid] ?? '(not found in prompts)';
+        wrap.appendChild(mdBlock(txt));
+        openModal(`Prompt ${pid}`, wrap);
+      });
+    }
+    function toolRefPill(nameOrKey, input) {
+      const tooName = nameOrKey.split('@')[0].trim()
+      const key = mapToolRefByName(tooName) || tooName;
+      return pill(`[Tool: ${nameOrKey}]`, 'View tool definition', () => {
+        const wrap = document.createElement('div');
+        if (input) {
+          wrap.appendChild(codeBlock(pretty(input)));
+        }
+        const def = state.toolDefs?.[key];
+        wrap.appendChild(codeBlock(pretty(def ?? `Tool not found: ${nameOrKey}`)));
+        openModal(`Tool ${nameOrKey}`, wrap);
+      });
+    }
+    function toolResultPill(tr) {
+      const label = tr?.tool_use_id ? `ToolResult @ ${tr.tool_use_id}` : 'ToolResult';
+      return pill(`[${label}]`, 'View tool_result payload', () => {
+        const wrap = document.createElement('div');
+        wrap.appendChild(codeBlock(tr.content));
+        openModal(label, wrap);
+      });
+    }
+
+    // -------- Message rendering --------
+    function renderMessageItem(msg) {
+      const holder = document.createElement('div');
+      const role = msg.role || '(role?)';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+
+      const header = document.createElement('div');
+      header.className = 'chips';
+      const r = document.createElement('span'); r.className = 'tag'; r.textContent = role;
+      header.appendChild(r);
+      if (msg.cache_control?.type === 'ephemeral' || msg.cache_control === 'ephemeral') {
+        const ep = document.createElement('span'); ep.className = 'tag'; ep.textContent = 'ephemeral';
+        header.appendChild(ep);
+      }
+      bubble.appendChild(header);
+
+      const contentBox = document.createElement('div'); contentBox.className = 'small';
+      const content = msg.content;
+
+      // string content
+      if (typeof content === 'string') {
+        if (isPromptId(content)) {
+          if (role !== 'user' || state.systemPromptIds.has(content)) {
+            contentBox.appendChild(promptRefPill(content));
+          } else {
+            const txt = state.promptMap?.[content] ?? content;
+            const b = document.createElement('div'); b.className = 'bubble small'; b.appendChild(mdBlock(txt));
+            contentBox.appendChild(b);
+          }
+        } else {
+          const b = document.createElement('div'); b.className = 'bubble small'; b.appendChild(mdBlock(content));
+          contentBox.appendChild(b);
+        }
+      }
+      // array content
+      else if (Array.isArray(content)) {
+        content.forEach(seg => {
+          if (seg?.type === 'text') {
+            const t = seg.text ?? '';
+            if (isPromptId(t)) {
+              if (role !== 'user' || state.systemPromptIds.has(t)) {
+                contentBox.appendChild(promptRefPill(t));
+              } else {
+                const txt = state.promptMap?.[t] ?? t;
+                const b = document.createElement('div'); b.className = 'bubble small'; b.appendChild(mdBlock(txt));
+                contentBox.appendChild(b);
+              }
+            } else {
+              const d = document.createElement('div');
+              d.className = 'small'; d.style.margin = '6px 0';
+              const b = document.createElement('div'); b.className = 'bubble small'; b.appendChild(mdBlock(t));
+              d.appendChild(b);
+              contentBox.appendChild(d);
+            }
+          } else if (seg?.type === 'tool_use') {
+            let nm = seg.name || 'tool';
+            if (seg.id) {
+              nm += ` @ ${seg.id}`;
+            }
+            contentBox.appendChild(toolRefPill(nm, seg.input));
+          } else if (seg?.type === 'tool_result') {
+            contentBox.appendChild(toolResultPill(seg));
+          } else if (seg?.type === 'thinking') {
+            const d = document.createElement('div');
+            d.className = 'small'; d.style.margin = '6px 0';
+            const b = document.createElement('div'); b.className = 'bubble small'; b.appendChild(mdBlock(`Thinking: ${seg.thinking || ''}`));
+            d.appendChild(b);
+            contentBox.appendChild(d);
+          } else {
+            const code = document.createElement('code');
+            code.textContent = pretty(seg);
+            contentBox.appendChild(code);
+          }
+        });
+      }
+      else if (content == null && msg.text) {
+        const b = document.createElement('div'); b.className = 'bubble small'; b.appendChild(mdBlock(msg.text));
+        contentBox.appendChild(b);
+      } else {
+        contentBox.appendChild(codeBlock(pretty(content)));
+      }
+
+      bubble.appendChild(contentBox);
+      holder.appendChild(bubble);
+      return holder;
+    }
+
+    // -------- Output helpers --------
+    function textFromResultContent(data) {
+      if (data?.text) return data.text;
+      if (Array.isArray(data?.content)) {
+        return data.content.map(seg => seg?.text ?? '').filter(Boolean).join('\n');
+      }
+      return '';
+    }
+
+    // -------- Panels --------
+    function renderInput(conv) {
+      inputPanel.innerHTML = '';
+      const input = conv.input || {};
+
+      // header chips
+      convHeader.innerHTML = '';
+      const model = input.model || '(model)';
+      convHeader.appendChild(pill(model, 'model', null, 'badge'));
+      if (typeof input.max_tokens === 'number') convHeader.appendChild(pill(`max_tokens:${input.max_tokens}`, '', null, 'badge'));
+      if (typeof input.temperature === 'number') convHeader.appendChild(pill(`temp:${input.temperature}`, '', null, 'badge'));
+
+      // System
+      if (Array.isArray(input.system) && input.system.length) {
+        const sec = document.createElement('div'); sec.className = 'small';
+        sec.innerHTML = '<div class="section-title">System</div>';
+        const wrap = document.createElement('div'); wrap.className = 'chips';
+        input.system.forEach(seg => {
+          if (typeof seg === 'string' && isPromptId(seg)) wrap.appendChild(promptRefPill(seg));
+          else if (seg?.type === 'text' && isPromptId(seg.text)) wrap.appendChild(promptRefPill(seg.text));
+          else {
+            const box = document.createElement('div'); box.className = 'bubble small';
+            const t = typeof seg === 'string' ? seg : (seg?.text ?? pretty(seg));
+            box.appendChild(mdBlock(t));
+            wrap.appendChild(box);
+          }
+        });
+        sec.appendChild(wrap);
+        inputPanel.appendChild(sec);
+      }
+
+      // Allowed tools
+      if (Array.isArray(input.tools) && input.tools.length) {
+        const sec = document.createElement('div'); sec.className = 'small';
+        sec.innerHTML = '<div class="section-title">Allowed Tools</div>';
+        const wrap = document.createElement('div'); wrap.className = 'chips';
+        input.tools.forEach(nameOrKey => wrap.appendChild(toolRefPill(nameOrKey)));
+        sec.appendChild(wrap);
+        inputPanel.appendChild(sec);
+      }
+
+      // Messages
+      const msgs = Array.isArray(input.messages) ? input.messages : [];
+      if (msgs.length) {
+        const sec = document.createElement('div'); sec.className = 'small';
+        sec.innerHTML = '<div class="section-title">Messages</div>';
+        msgs.forEach(m => sec.appendChild(renderMessageItem(m)));
+        inputPanel.appendChild(sec);
+      }
+
+      // Other input fields
+      const extras = ['system', 'messages', 'tools', 'model', 'max_tokens', 'temperature', 'metadata', 'stream', 'betas', 'tool_choice'];
+      const inputClone = JSON.parse(JSON.stringify(input || {}));
+      extras.forEach(k => delete inputClone[k]);
+      const remains = Object.keys(inputClone || {});
+      if (remains.length) {
+        const sec = document.createElement('div'); sec.className = 'small';
+        sec.innerHTML = '<div class="section-title">Other Input Fields</div>';
+        sec.appendChild(codeBlock(pretty(inputClone)));
+        inputPanel.appendChild(sec);
+      }
+    }
+
+    function renderOutput(conv) {
+      outputPanel.innerHTML = '';
+      const result = conv.result || {};
+      const type = result.type || '';
+      const data = result.data || {};
+      const head = document.createElement('div'); head.className = 'chips';
+      if (type) head.appendChild(pill(type, '', null, 'badge'));
+      if (data?.usage) {
+        const u = data.usage;
+        head.appendChild(pill(`in:${u.input_tokens ?? '-'}`, '', null, 'badge'));
+        head.appendChild(pill(`out:${u.output_tokens ?? '-'}`, '', null, 'badge'));
+      }
+      outputPanel.appendChild(head);
+
+      // main text (markdown)
+      const text = textFromResultContent(data);
+      if (text) {
+        const bubble = document.createElement('div'); bubble.className = 'bubble small';
+        bubble.appendChild(mdBlock(text));
+        outputPanel.appendChild(bubble);
+      }
+
+      // tool activity
+      if (Array.isArray(data.tools) && data.tools.length) {
+        const sec = document.createElement('div'); sec.className = 'small';
+        sec.innerHTML = '<div class="section-title">Tool Activity</div>';
+        const wrap = document.createElement('div'); wrap.className = 'chips';
+        data.tools.forEach(t => {
+          const nm = t.name || 'tool';
+          const p = toolRefPill(nm);
+          p.title = `id:${t.id || '-'}; ${t.durationMs ? 'duration:' + t.durationMs + 'ms' : ''}`;
+          wrap.appendChild(p);
+        });
+        sec.appendChild(wrap);
+        outputPanel.appendChild(sec);
+      }
+
+      // other result fields
+      const known = ['id', 'type', 'role', 'model', 'content', 'text', 'tools', 'usage', 'stop_reason', 'stop_sequence'];
+      const dataClone = JSON.parse(JSON.stringify(data || {}));
+      known.forEach(k => delete dataClone[k]);
+      if (Object.keys(dataClone).length) {
+        const sec = document.createElement('div'); sec.className = 'small';
+        sec.innerHTML = '<div class="section-title">Other Result Fields</div>';
+        sec.appendChild(codeBlock(pretty(dataClone)));
+        outputPanel.appendChild(sec);
+      }
+    }
+
+    // -------- Navigation --------
+    function setIndex(i) {
+      const total = (state.data?.conversations || []).length;
+      if (total === 0) return;
+      state.index = Math.max(0, Math.min(i, total - 1));
+      prevBtn.disabled = state.index <= 0;
+      nextBtn.disabled = state.index >= total - 1;
+      indexLabel.textContent = `${state.index + 1} / ${total}`;
+      const conv = state.data.conversations[state.index];
+      renderInput(conv);
+      renderOutput(conv);
+    }
+    prevBtn.onclick = () => setIndex(state.index - 1);
+    nextBtn.onclick = () => setIndex(state.index + 1);
+    document.addEventListener('keydown', (e) => {
+      if (!state.data) return;
+      if (e.key === 'ArrowLeft') prevBtn.click();
+      if (e.key === 'ArrowRight') nextBtn.click();
+    });
+
+    // -------- File handling --------
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      fileNameEl.textContent = file.name;
+      try {
+        const text = await file.text();
+
+        if (typeof window.parseConversationLog !== 'function') {
+          throw new Error('parser.js is missing parseConversationLog(logString)');
+        }
+
+        // Only support raw log -> parseConversationLog
+        const json = window.parseConversationLog(text);
+
+        console.log(json)
+
+        state.data = json;
+        buildMaps(json);
+        renderTools();
+        renderSystemPrompts();
+
+        const total = (json.conversations || []).length;
+        const when = json.generated_at ? ' | generated at: ' + json.generated_at : '';
+        metaInfoEl.textContent = `Conversations: ${total}${when}`;
+
+        setIndex(0);
+      } catch (err) {
+        alert('Failed to parse: ' + (err?.message || err));
+      }
+    });
+
+    // Initial empty states
+    renderTools(); renderSystemPrompts();
+  </script>
+</body>
+
+</html>
