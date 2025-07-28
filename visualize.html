@@ -540,14 +540,14 @@
       return pre;
     }
     function mdBlock(text) {
-      const raw = (window.marked && typeof window.marked.parse === 'function')
+      const raw = ((window.marked && typeof window.marked.parse === 'function')
         ? window.marked.parse(text ?? '')
-        : (text ?? '');
+        : (text ?? '')).replaceAll('<system-reminder>', '&lt;system-reminder&gt;').replaceAll('</system-reminder>', '&lt;/system-reminder&gt;');
       const clean = (window.DOMPurify && typeof window.DOMPurify.sanitize === 'function')
         ? window.DOMPurify.sanitize(raw)
         : raw;
       const div = document.createElement('div');
-      div.innerHTML = clean;
+      div.innerHTML = raw;
       return div;
     }
     function pretty(obj) { try { return JSON.stringify(obj, null, 2); } catch { return String(obj); } }
@@ -718,7 +718,15 @@
       const label = tr?.tool_use_id ? `ToolResult @ ${tr.tool_use_id}` : 'ToolResult';
       return pill(`[${label}]`, 'View tool_result payload', () => {
         const wrap = document.createElement('div');
-        wrap.appendChild(codeBlock(tr.content));
+        let content = ''
+        if (typeof tr.content === 'string') {
+          content = tr.content;
+        } else if (Array.isArray(tr.content)) {
+          content = tr.content.map(seg => seg?.text ?? '').join('\n');
+        } else {
+          content = pretty(tr.content);
+        }
+        wrap.appendChild(codeBlock(content));
         openModal(label, wrap);
       });
     }
@@ -912,7 +920,7 @@
         const wrap = document.createElement('div'); wrap.className = 'chips';
         data.tools.forEach(t => {
           const nm = t.name || 'tool';
-          const p = toolRefPill(nm);
+          const p = toolRefPill(nm, JSON.parse(t.preview));
           p.title = `id:${t.id || '-'}; ${t.durationMs ? 'duration:' + t.durationMs + 'ms' : ''}`;
           wrap.appendChild(p);
         });
@@ -975,8 +983,7 @@
         renderSystemPrompts();
 
         const total = (json.conversations || []).length;
-        const when = json.generated_at ? ' | generated at: ' + json.generated_at : '';
-        metaInfoEl.textContent = `Conversations: ${total}${when}`;
+        metaInfoEl.textContent = `Conversations: ${total}`;
 
         setIndex(0);
       } catch (err) {
