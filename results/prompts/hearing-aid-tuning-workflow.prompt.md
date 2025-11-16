@@ -56,6 +56,312 @@ available_experts:
 
 ---
 
+## 专家节点配置与调用规范
+
+### 专家节点通用配置结构
+
+每个专家节点必须遵循以下配置规范：
+
+```yaml
+expert_node_config:
+  model:
+    name: "claude-sonnet-4-20250514"  # 统一使用的模型
+    temperature: 0.6                   # 控制回复多样性
+    max_tokens: 4096                   # 最大输出长度（单侧耳节点为8192）
+
+  system: |
+    # 专家特定的系统提示词
+    # 包含：角色设定、对话规范、问诊逻辑、输出格式等
+
+  prompt_template: |
+    **注意，正收益部分或许你的助手已经帮你询问过患者，他的反馈是：{profit}**
+    现在，已知用户基本信息为：{patient_info}
+    你作为解决"{problem_type}"问题验配师对用户的回复：
+
+  use_messages: true  # 启用消息历史传递
+```
+
+### 专家节点调用机制
+
+当调度中心确定需要咨询特定专家时，使用 **Task 工具** 调用 SubAgent：
+
+```python
+def invoke_expert_subagent(expert_type, context):
+    """
+    调用专家 SubAgent 的核心逻辑
+
+    Args:
+        expert_type: 专家节点类型，如 "speech_clarity_node"
+        context: 上下文信息
+            - patient_info: 患者基本信息（听力图、佩戴天数等）
+            - profit: 正收益评估结果
+            - messages: 对话历史（use_messages=true 时传递）
+    """
+
+    # 1. 构建专家调用提示词
+    expert_prompt = f"""
+    你现在是 {expert_type} 专家节点。
+
+    【患者基本信息】
+    {format_patient_info(context['patient_info'])}
+
+    【正收益评估】
+    {context['profit']}
+
+    【对话历史】
+    {format_conversation_history(context['messages'])}
+
+    请根据你的专业问诊逻辑，分析患者问题并给出建议。
+
+    输出要求：
+    1. 使用 <think></think> 包裹思考过程
+    2. 按照问诊逻辑给出 Action 代码
+    3. 输出中间过程 JSON
+    4. 使用 "@" 分隔内部分析和患者回复
+    """
+
+    # 2. 调用 Task 工具
+    response = Task(
+        description=f"咨询{expert_type}专家",
+        prompt=expert_prompt,
+        subagent_type=expert_type,
+        model="sonnet"  # 使用 Sonnet 模型
+    )
+
+    return response
+```
+
+### 患者信息结构 (patient_info)
+
+传递给专家节点的患者信息必须包含：
+
+```json
+{
+  "patient_id": "P12345",
+  "age": 68,
+  "fitting_date": "2024-10-01",
+  "days_since_fitting": 107,  // 用于判断适应期
+
+  "hearing_loss": {
+    "left_ear": {
+      "250Hz": 35,
+      "500Hz": 40,
+      "1000Hz": 45,
+      "2000Hz": 55,
+      "4000Hz": 65,
+      "6000Hz": 70,
+      "type": "缓降型",
+      "average_loss": 52
+    },
+    "right_ear": {
+      "250Hz": 30,
+      "500Hz": 35,
+      "1000Hz": 40,
+      "2000Hz": 50,
+      "4000Hz": 60,
+      "6000Hz": 65,
+      "type": "缓降型",
+      "average_loss": 47
+    },
+    "dominant_ear": "right"
+  },
+
+  "current_earplugs": {
+    "left": "半开放式（郁金香）",
+    "right": "半开放式（郁金香）"
+  },
+
+  "current_settings": {
+    "mode": "安静模式",
+    "noise_reduction_level": 5,
+    "gain_profile": {...}
+  },
+
+  "medical_history": {
+    "has_otitis_media": false,
+    "vestibular_issues": false,
+    "allergies": []
+  }
+}
+```
+
+### 正收益评估 (profit)
+
+正收益评估是多数专家节点的前置条件：
+
+```json
+{
+  "assessed": true,
+  "quiet_environment": {
+    "speech_clarity": "正常",  // 或 "有问题"
+    "overall_loudness": "合适",  // 或 "偏大"/"偏小"
+    "distance_tested": "2米内一对一"
+  },
+  "assessment_notes": "安静环境下近距离交流正常，音量舒适",
+  "timestamp": "2025-01-16T10:30:00Z"
+}
+```
+
+**重要**: 如果调度中心尚未评估正收益，需要先询问患者后再路由到专家。
+
+### 消息历史传递 (use_messages: true)
+
+启用 `use_messages: true` 时，需要传递完整对话上下文：
+
+```json
+{
+  "messages": [
+    {
+      "role": "patient",
+      "content": "戴上助听器后听不清楚",
+      "timestamp": "2025-01-16T10:00:00Z"
+    },
+    {
+      "role": "coordinator",
+      "content": "您是在安静环境还是嘈杂环境听不清？",
+      "timestamp": "2025-01-16T10:00:30Z"
+    },
+    {
+      "role": "patient",
+      "content": "安静环境下也听不清，男声比女声模糊",
+      "timestamp": "2025-01-16T10:01:00Z"
+    }
+  ]
+}
+```
+
+### 专家响应解析
+
+专家节点返回的响应需要解析以下结构：
+
+```markdown
+## 专家响应结构
+
+<think>
+[专家的思考过程]
+- 分析患者症状
+- 应用问诊逻辑
+- 确定诊断假设
+</think>
+
+Action-XXX-Action名称
+
+[自我分析过程]
+根据问诊逻辑，患者表现为...，因此给出...
+
+[中间过程JSON]
+{
+  "正收益是否有问题": "否",
+  "问题出现环境": "所有环境",
+  "是否低频影响": "是",
+  ...
+}
+
+@
+[对患者的回复内容]
+您好，根据您的描述...请点击按钮确认参数下发。
+```
+
+调度中心解析流程：
+
+```python
+def parse_expert_response(response):
+    """解析专家节点返回的响应"""
+
+    # 1. 提取思考过程
+    thinking = extract_between_tags(response, "<think>", "</think>")
+
+    # 2. 提取 Action 代码
+    action_code = extract_action_pattern(response)  # Action-XXX-描述
+
+    # 3. 提取中间过程 JSON
+    diagnostic_json = extract_json_block(response)
+
+    # 4. 提取患者回复（@ 之后的内容）
+    patient_message = extract_after_marker(response, "@")
+
+    return {
+        "thinking": thinking,
+        "action": action_code,
+        "diagnostics": diagnostic_json,
+        "patient_reply": patient_message
+    }
+```
+
+### 专家间转接处理
+
+当专家节点返回转接 Action 时的处理：
+
+```python
+# 转接 Action 模式
+TRANSFER_ACTIONS = {
+    "Action-555-转到xxx": "重新分类到其他专家",
+    "Action-777-转到客服": "转接人工客服",
+    "Action-109-联系远程验配师": "升级到高级验配师",
+
+    # 特定问题转接
+    "Action-200-转到啸叫": "howling_node",
+    "Action-300-转到言语清晰度问题": "speech_clarity_node",
+    "Action-400-转到噪音不耐受": "noise_intolerance_node",
+    "Action-2011-转到言语清晰度": "speech_clarity_node",
+    ...
+}
+
+def handle_transfer(action_code):
+    if action_code.startswith("Action-555"):
+        # 提取目标类别，重新路由
+        target = extract_target_category(action_code)
+        new_expert = map_category_to_expert(target)
+        invoke_expert_subagent(new_expert, context)
+
+    elif action_code == "Action-777-转到客服":
+        # 记录到 Memory，结束自动诊断
+        memory_update(action_taken={"transfer_to": "human_customer_service"})
+        return "转接人工客服处理"
+
+    elif action_code.startswith("Action-109"):
+        # 升级到高级验配师
+        schedule_callback()
+        return "已安排专业验配师回访"
+```
+
+### 专家节点质量控制
+
+调度中心对专家建议的校验：
+
+```python
+def validate_expert_recommendation(action, patient_info):
+    """校验专家建议的安全性和合理性"""
+
+    # 1. 检查参数调整幅度
+    if is_gain_adjustment(action):
+        adjustment_db = extract_adjustment_value(action)
+        if abs(adjustment_db) > 3:
+            raise SafetyError("单次调整超过3dB安全阈值")
+
+    # 2. 检查耳塞更换建议
+    if is_earplug_change(action):
+        current = patient_info['current_earplugs']
+        recommended = extract_earplug_type(action)
+        if not is_valid_transition(current, recommended):
+            raise SafetyError("耳塞更换跨度超过一级")
+
+    # 3. 检查禁忌症优先级
+    if has_contraindication_symptoms(patient_info):
+        if not action.startswith("Action-70"):
+            raise PriorityError("存在禁忌症症状，应优先处理")
+
+    # 4. 检查累计调整次数
+    same_param_count = count_adjustments(action_type)
+    if same_param_count >= 2:
+        suggest_action = "Action-1072-重新测听听力图"
+        return suggest_action
+
+    return action  # 通过校验
+```
+
+---
+
 ## TodoWrite 诊断记录规范
 
 每次诊断流程必须使用 TodoWrite 记录以下结构化步骤：
@@ -372,6 +678,169 @@ Action: Action-1081-降低低频
 
 **@患者回复**:
 根据您的描述，可能是低频过多影响了清晰度。已为您准备好低频调整参数，请点击弹窗的按钮确认下发。调整后请试试听感有没有改善。
+
+---
+
+### 示例 3: 完整专家节点调用流程
+
+**场景**: 患者反馈"声音太吵了，受不了"
+
+**Step 1: 调度中心初步分析**
+```python
+# TodoWrite 记录
+todos = [
+    {"content": "【收集信息】患者主诉'声音太吵'", "status": "completed"},
+    {"content": "【怀疑目标】噪声不耐受问题", "status": "in_progress"},
+    {"content": "【路由决策】调用noise_intolerance_node", "status": "pending"}
+]
+
+# Memory 记录
+observation = {
+    "observation_id": "obs_20250116_003",
+    "interaction_data": {
+        "patient_utterance": "声音太吵了，受不了",
+        "interpreted_intent": "噪声不耐受",
+        "ambiguity_level": "medium"
+    }
+}
+```
+
+**Step 2: 调度中心先询问正收益**
+
+调度中心: "安静环境下一对一近距离聊天，音量和清晰度感觉怎么样？"
+
+患者: "安静时还好，就是到了嘈杂环境就受不了"
+
+**Step 3: 调用专家 SubAgent**
+
+```python
+# 构建专家调用上下文
+context = {
+    "patient_info": {
+        "patient_id": "P12345",
+        "days_since_fitting": 15,  # 适应期内
+        "hearing_loss": {
+            "left_ear": {"250Hz": 40, "500Hz": 45, ...},
+            "right_ear": {"250Hz": 38, "500Hz": 42, ...}
+        }
+    },
+    "profit": {
+        "assessed": True,
+        "quiet_environment": {
+            "speech_clarity": "正常",
+            "overall_loudness": "合适"
+        }
+    },
+    "messages": [
+        {"role": "patient", "content": "声音太吵了，受不了"},
+        {"role": "coordinator", "content": "安静环境下一对一近距离聊天，音量和清晰度感觉怎么样？"},
+        {"role": "patient", "content": "安静时还好，就是到了嘈杂环境就受不了"}
+    ]
+}
+
+# 调用 Task 工具
+response = Task(
+    description="咨询噪声不耐受专家",
+    prompt=f"""
+    你现在是 noise_intolerance_node 专家节点。
+
+    【患者基本信息】
+    患者ID: P12345
+    佩戴天数: 15天（适应期内）
+    左耳听损: 250Hz=40dB, 500Hz=45dB...
+    右耳听损: 250Hz=38dB, 500Hz=42dB...
+
+    【正收益评估】
+    已评估：安静环境下言语清晰度正常，整体音量合适
+
+    【对话历史】
+    患者: 声音太吵了，受不了
+    调度员: 安静环境下一对一近距离聊天，音量和清晰度感觉怎么样？
+    患者: 安静时还好，就是到了嘈杂环境就受不了
+
+    请根据你的专业问诊逻辑，分析患者问题并给出建议。
+    """,
+    subagent_type="noise_intolerance_node",
+    model="sonnet"
+)
+```
+
+**Step 4: 专家节点响应**
+
+```markdown
+<think>
+1. 患者主诉"声音太吵"，仅在嘈杂环境中出现
+2. 安静环境正收益没问题（清晰度正常，音量合适）
+3. 患者处于适应期内（佩戴15天）
+4. 根据问诊逻辑：正收益没问题 + 仅嘈杂环境吵 + 适应期内
+5. 应先进行适应期安抚（Action-202）
+6. 同时建议自由调节降噪等级
+</think>
+
+Action-202-适应期安抚
+
+自我分析：
+根据问诊逻辑，患者正收益没有问题，仅在嘈杂环境觉得吵，且处于适应期内（15天）。
+按照流程：正收益没问题 + 仅嘈杂环境吵 + 适应期内 → 先适应期安抚。
+
+{
+  "正收益是否有问题": "否",
+  "主诉是噪声问题还是噪声下言语问题": "噪声问题",
+  "是否在适应期内": "是",
+  "问题出现环境": "仅嘈杂环境吵",
+  "增益调整后是否改善": "待验证",
+  "是否建议转入客服": "否"
+}
+
+@
+刚开始佩戴助听器，在嘈杂环境觉得吵是正常的。这需要4-6周的适应期。您可以尝试自由调节一下降噪等级，感受不同设置下的变化。
+```
+
+**Step 5: 调度中心解析与记录**
+
+```python
+# 解析专家响应
+parsed = parse_expert_response(response)
+# parsed = {
+#     "thinking": "1. 患者主诉... 5. 应先进行适应期安抚",
+#     "action": "Action-202-适应期安抚",
+#     "diagnostics": {...},
+#     "patient_reply": "刚开始佩戴助听器..."
+# }
+
+# 更新 TodoWrite
+todos = [
+    {"content": "【诊断假设】适应期内嘈杂环境不耐受", "status": "completed"},
+    {"content": "【行动计划】Action-202-适应期安抚", "status": "completed"},
+    {"content": "【验证反馈】等待患者接受安抚或需进一步处理", "status": "in_progress"}
+]
+
+# 更新 Memory
+memory_update({
+    "diagnostic_process": {
+        "suspected_issue": "噪声不耐受-适应期",
+        "hypotheses": [{"id": "H1", "description": "适应期内正常现象", "confidence": 0.9}],
+        "selected_hypothesis": "H1"
+    },
+    "action_taken": {
+        "action_code": "Action-202-适应期安抚",
+        "expert_consulted": "noise_intolerance_node",
+        "patient_instruction": "刚开始佩戴助听器，在嘈杂环境觉得吵是正常的..."
+    }
+})
+```
+
+**Step 6: 发送给患者**
+
+调度中心将专家建议（`@` 之后的内容）直接发送给患者：
+
+"刚开始佩戴助听器，在嘈杂环境觉得吵是正常的。这需要4-6周的适应期。您可以尝试自由调节一下降噪等级，感受不同设置下的变化。"
+
+**Step 7: 患者反馈处理**
+
+如果患者不接受安抚："还是太吵了，不能调一下吗？"
+
+调度中心再次调用专家（传递更新后的消息历史），专家会进入下一步逻辑（建议自由调节降噪等级 Action-203）。
 
 ---
 
